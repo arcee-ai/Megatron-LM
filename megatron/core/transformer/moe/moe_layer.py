@@ -85,6 +85,7 @@ class MoELayer(BaseMoELayer):
     def forward(self, hidden_states: torch.Tensor):
         # process MoE
         scores, indices = self.router(hidden_states)
+        print(f"!!! moe router indices={indices} {indices.shape}")
         (dispatched_input, tokens_per_expert) = self.token_dispatcher.token_permutation(
             hidden_states, scores, indices
         )

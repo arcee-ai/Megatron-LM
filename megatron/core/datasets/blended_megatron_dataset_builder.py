@@ -55,6 +55,7 @@ class BlendedMegatronDatasetBuilder(object):
             f"Building dataset splits with cls={cls.__name__}, sizes={self.sizes}, and config={self.config}",
         )
 
+
         if self.config.mock:
             assert issubclass(self.cls, MockDataset)
         else:
@@ -127,6 +128,7 @@ class BlendedMegatronDatasetBuilder(object):
         for dataset in datasets:
             if dataset is not None and len(dataset) > 0:
                 if isinstance(dataset, BlendedDataset):
+                    
                     # Check blend size
                     assert dataset.size is None or dataset.size == dataset.dataset_index.shape[0]
                     # Check blend access of mid-level datasets
@@ -136,7 +138,7 @@ class BlendedMegatronDatasetBuilder(object):
                             raise IndexError(
                                 f"{type(dataset).__name__} blend goes out of bounds for {type([dataset_and_size[0]]).__name__} {i} for {dataset.split.name} split"
                             )
-
+     
         return datasets
 
     def _build_blended_dataset_splits(self,) -> List[Optional[TopLevelDataset]]:
@@ -147,6 +149,7 @@ class BlendedMegatronDatasetBuilder(object):
         Returns:
             List[Optional[TopLevelDataset]]: A list containing a dataset instance (or None) per split
         """
+
         ##
         # Return fake "mock" datasets
         ##
@@ -157,14 +160,17 @@ class BlendedMegatronDatasetBuilder(object):
         # All splits come from the same distribution
         ##
         elif self.config.blend:
+
             prefixes, weights = self.config.blend
+          
             if weights is not None:
                 weights = normalize(weights)
 
             split = self.config.split_matrix
 
+          
             # Blend consists of a single prefix
-            if len(prefixes) == 1:
+            if len(prefixes) == 1:          
                 return self._build_megatron_dataset_splits(prefixes[0], split, self.sizes)
 
             # Build the mid-level datasets
@@ -299,9 +305,11 @@ class BlendedMegatronDatasetBuilder(object):
         else:
             raise NotImplementedError
 
+
         # Build the split indices for the low level dataset
         if low_level_dataset is not None:
             num_elements = self.cls.numel_low_level_dataset(low_level_dataset)
+
             split_indices = []
             for i, _ in enumerate(Split):
                 if split[i] is not None:

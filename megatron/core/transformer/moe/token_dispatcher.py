@@ -164,6 +164,7 @@ class MoEAllGatherTokenDispatcher(MoETokenDispatcher):
         # Reshape indices to be compatible with Tensor.gather
         self.indices = self.indices.view(-1, 1).expand(-1, hidden_states.shape[-1])
         permuted_local_hidden_states = torch.gather(local_hidden_states, 0, self.indices)
+        print(f"token permute device={permuted_local_hidden_states.device} tokens_per_expert={tokens_per_expert}")
         return (
             permuted_local_hidden_states,
             tokens_per_expert,

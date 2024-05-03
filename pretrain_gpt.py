@@ -48,6 +48,9 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
     Returns:
         Union[GPTModel, megatron.legacy.model.GPTModel]: The returned model
     """
+    #if torch.cuda.current_device() == 0:
+    #    print( pre_process, post_process, model_type)
+    #exit()
     args = get_args()
     use_te = args.transformer_impl == "transformer_engine"
 
@@ -80,6 +83,15 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
             position_embedding_type=args.position_embedding_type,
             rotary_percent=args.rotary_percent,
         )
+        sd = model.state_dict()
+
+        print(f"!!! Model's state_dict: {sd.keys()}")        
+        #print(f"!!! decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight : {sd['decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight'].shape}")
+        #print(f"!!! decoder.layers.0.mlp.experts.weight1 : {sd['decoder.layers.0.mlp.experts.weight1'].shape}")
+        #print(f"!!! decoder.layers.0.mlp.experts.weight2 : {sd['decoder.layers.0.mlp.experts.weight2'].shape}")
+        #for param_tensor in model.state_dict():
+        #    print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+
     else:
         assert(args.context_parallel_size == 1), "Context parallelism is only supported with Megatron Core!"
 
@@ -117,7 +129,7 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
         output_tensor (torch.Tensor): The tensor with the losses
     """
     args = get_args()
-
+    #print(f"!!! loss_mask={loss_mask.shape} output_tensor={output_tensor.shape}")
     losses = output_tensor.float()
     loss_mask = loss_mask.view(-1).float()
     if args.context_parallel_size > 1:
@@ -208,6 +220,8 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
         dataset_type = MockGPTDataset
     else:
         dataset_type = GPTDataset
+
+
 
     print_rank_0("> building train, validation, and test datasets for GPT ...")
 
