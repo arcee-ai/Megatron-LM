@@ -1385,14 +1385,22 @@ def get_train_valid_test_num_samples():
     )
 
 
-def build_train_valid_test_datasets(build_train_valid_test_datasets_provider):
-    """Build pretraining datasets."""
-    train_valid_test_num_samples = get_train_valid_test_num_samples()
+def sample_tokens_banner(train_valid_test_num_samples, seq_length, consumed_train_samples=0):
     print_rank_0(' > datasets target sizes (minimum size):')
-    print_rank_0('    train:      {}'.format(train_valid_test_num_samples[0]))
-    print_rank_0('    validation: {}'.format(train_valid_test_num_samples[1]))
-    print_rank_0('    test:       {}'.format(train_valid_test_num_samples[2]))
-    return build_train_valid_test_datasets_provider(train_valid_test_num_samples)
+    print_rank_0('    train:      {} samples OR {} tokens'.format(train_valid_test_num_samples[0], \
+                                                                  train_valid_test_num_samples[0] * seq_length),)
+    print_rank_0('    validation: {} samples OR {} tokens'.format(train_valid_test_num_samples[1], \
+                                                                  train_valid_test_num_samples[1] * seq_length),)
+    print_rank_0('    test:       {} samples OR {} tokens'.format(train_valid_test_num_samples[2], \
+                                                                  train_valid_test_num_samples[2] * seq_length),)
+
+    if consumed_train_samples > 0:
+        print_rank_0(' > datasets consumed sizes (minimum size):')
+        print_rank_0('    train:      {} samples OR {} tokens have been CONSUMED so far'.\
+                     format(consumed_train_samples, consumed_train_samples * seq_length),)
+        print_rank_0('    train:      {} samples OR {} tokens are REMAINING'.\
+                     format(train_valid_test_num_samples[0] - consumed_train_samples, \
+                            (train_valid_test_num_samples[0] - consumed_train_samples) * seq_length),)
 
 
 def build_train_valid_test_data_loaders(
@@ -1421,9 +1429,13 @@ def build_train_valid_test_data_loaders(
     # Construct the data pipeline
     if is_distributed or mpu.get_tensor_model_parallel_rank() == 0:
 
+        train_valid_test_num_samples = get_train_valid_test_num_samples()
+        
+        # print banner
+        sample_tokens_banner(train_valid_test_num_samples, args.seq_length, args.get("consumed_train_samples", 0))
+
         # Build datasets.
-        train_ds, valid_ds, test_ds = build_train_valid_test_datasets(
-            build_train_valid_test_datasets_provider)
+        train_ds, valid_ds, test_ds =  build_train_valid_test_datasets_provider(train_valid_test_num_samples)
         # Build dataloders.
         train_dataloader = build_pretraining_data_loader(
             train_ds, args.consumed_train_samples)
