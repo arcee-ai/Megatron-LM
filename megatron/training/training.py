@@ -1429,13 +1429,13 @@ def build_train_valid_test_data_loaders(
     # Construct the data pipeline
     if is_distributed or mpu.get_tensor_model_parallel_rank() == 0:
 
-        train_valid_test_num_samples = get_train_valid_test_num_samples()
-        
+        train_ds, valid_ds, test_ds = build_train_valid_test_datasets_provider([None, None, None])
+
         # print banner
+        train_valid_test_num_samples = len(train_ds), len(valid_ds), len(test_ds)
         sample_tokens_banner(train_valid_test_num_samples, args.seq_length, args.get("consumed_train_samples", 0))
 
-        # Build datasets.
-        train_ds, valid_ds, test_ds =  build_train_valid_test_datasets_provider(train_valid_test_num_samples)
+        
         # Build dataloders.
         train_dataloader = build_pretraining_data_loader(
             train_ds, args.consumed_train_samples)
