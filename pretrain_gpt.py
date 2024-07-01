@@ -38,7 +38,7 @@ stimer = StragglerDetector()
 def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megatron.legacy.model.GPTModel]:
     """Builds the model.
 
-    If you set the use_mcore_models to True, it will return the mcore GPT model and if not the legacy GPT model.
+    If you set the use_legacy_models to True, it will return the legacy GPT model and if not the mcore GPT model.
 
     Args:
         pre_process (bool, optional): Set to true if you need to compute embedings. Defaults to True.
@@ -48,9 +48,6 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
     Returns:
         Union[GPTModel, megatron.legacy.model.GPTModel]: The returned model
     """
-    #if torch.cuda.current_device() == 0:
-    #    print( pre_process, post_process, model_type)
-    #exit()
     args = get_args()
     use_te = args.transformer_impl == "transformer_engine"
 
@@ -61,7 +58,15 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
     else:
         config = core_transformer_config_from_args(args)
 
-    if args.use_mcore_models:
+    if args.use_legacy_models:
+        model = megatron.legacy.model.GPTModel(
+            config,
+            num_tokentypes=0,
+            parallel_output=True,
+            pre_process=pre_process,
+            post_process=post_process,
+        )
+    else:  # using core models
         if args.spec is not None:
             transformer_layer_spec = import_module(args.spec)
         else:
@@ -83,27 +88,14 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
             position_embedding_type=args.position_embedding_type,
             rotary_percent=args.rotary_percent,
         )
-        sd = model.state_dict()
+        #sd = model.state_dict()
 
-        print(f"!!! Model's state_dict: {sd.keys()}")        
-        #print(f"!!! decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight : {sd['decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight'].shape}")
-        #print(f"!!! decoder.layers.0.mlp.experts.weight1 : {sd['decoder.layers.0.mlp.experts.weight1'].shape}")
-        #print(f"!!! decoder.layers.0.mlp.experts.weight2 : {sd['decoder.layers.0.mlp.experts.weight2'].shape}")
-        #for param_tensor in model.state_dict():
+        #print(f"!!! Model's state_dict: {sd.keys()}")
+        # print(f"!!! decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight : {sd['decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight'].shape}")
+        # print(f"!!! decoder.layers.0.mlp.experts.weight1 : {sd['decoder.layers.0.mlp.experts.weight1'].shape}")
+        # print(f"!!! decoder.layers.0.mlp.experts.weight2 : {sd['decoder.layers.0.mlp.experts.weight2'].shape}")
+        # for param_tensor in model.state_dict():
         #    print(param_tensor, "\t", model.state_dict()[param_tensor].size())
-
-    else:
-        assert (
-            args.context_parallel_size == 1
-        ), "Context parallelism is only supported with Megatron Core!"
-
-        model = megatron.legacy.model.GPTModel(
-            config,
-            num_tokentypes=0,
-            parallel_output=True,
-            pre_process=pre_process,
-            post_process=post_process,
-        )
 
     return model
 
@@ -133,11 +125,11 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
 
     Returns:
         the loss scalar for this micro-batch
-        the total number of tokens across all data parallel ranks and microbatches
-        a dict containing reporting metrics on the loss and number of tokens across the data parallel ranks
+        the number of non-padded tokens in this microbatch
+        a dict containing reporting metrics on the loss and number of tokens across
+            the data parallel ranks
     """
     args = get_args()
-    #print(f"!!! loss_mask={loss_mask.shape} output_tensor={output_tensor.shape}")
     losses = output_tensor.float()
     loss_mask = loss_mask.view(-1).float()
     total_tokens = loss_mask.sum()
@@ -158,10 +150,10 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
     reporting_loss = loss.clone().detach()
     torch.distributed.all_reduce(reporting_loss, group=mpu.get_data_parallel_group())
 
-    num_tokens = reporting_loss[1].clone().detach().to(torch.int)
+    local_num_tokens = loss[1].clone().detach().to(torch.int)
     return (
         loss[0] * args.context_parallel_size,
-        num_tokens,
+        local_num_tokens,
         {'lm loss': (reporting_loss[0], reporting_loss[1])},
     )
 
@@ -210,6 +202,7 @@ def core_gpt_dataset_config_from_args(args):
             get_blend_from_list(args.test_data_path)
         ],
         split=args.split,
+        num_dataset_builder_threads=args.num_dataset_builder_threads,
         path_to_cache=args.data_cache_path,
         mmap_bin_files=args.mmap_bin_files,
         tokenizer=tokenizer,

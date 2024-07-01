@@ -3,6 +3,7 @@
 """Pretrain T5"""
 
 from functools import partial
+from typing import Union
 
 import torch
 
@@ -29,7 +30,7 @@ from megatron.core.models.T5.t5_spec import (get_t5_encoder_with_transformer_eng
                                             get_t5_decoder_with_transformer_engine_block_spec,
                                             get_t5_encoder_with_local_block_spec,
                                             get_t5_decoder_with_local_block_spec)
-from megatron.legacy.model import T5Model as NonCoreT5Model
+from megatron.legacy.model import T5Model as LegacyT5Model
 
 """
 Pipeline parallelism for T5
@@ -70,7 +71,7 @@ to accumulate the encoder_hidden_state gradient across skip connections
 
 def model_provider(
     pre_process=True, post_process=True, add_encoder=True, add_decoder=True
-) -> T5Model:
+) -> Union[LegacyT5Model, T5Model]:
     """Builds the model.
 
     Args:
@@ -84,7 +85,17 @@ def model_provider(
 
     args = get_args()
     config = core_transformer_config_from_args(args)
-    if args.use_mcore_models:
+    if args.use_legacy_models:
+        model = LegacyT5Model(
+            config=config,
+            num_tokentypes=0,
+            parallel_output=True,
+            pre_process=pre_process,
+            post_process=post_process,
+            add_encoder=add_encoder,
+            add_decoder=add_decoder,
+        )
+    else:
         if args.transformer_impl == "local":
             en_block_spec = get_t5_encoder_with_local_block_spec(args.encoder_num_layers)
             de_block_spec = get_t5_decoder_with_local_block_spec(args.decoder_num_layers)
@@ -110,16 +121,7 @@ def model_provider(
             position_embedding_type=args.position_embedding_type,
             rotary_percent=args.rotary_percent,
         )
-    else:
-        model = NonCoreT5Model(
-            config=config,
-            num_tokentypes=0,
-            parallel_output=True,
-            pre_process=pre_process,
-            post_process=post_process,
-            add_encoder=add_encoder,
-            add_decoder=add_decoder,
-        )
+
     return model
 
 
@@ -155,6 +157,12 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
     Args:
         loss_mask (torch.Tensor): Used to mask out some portions of the loss
         output_tensor (torch.Tensor): The tensor with the losses
+
+    Returns:
+        the loss scalar for this micro-batch
+        the number of non-padded tokens in this microbatch
+        a dict containing reporting metrics on the loss and number of tokens across
+            the data parallel ranks
     """
     lm_loss_ = output_tensor.float()
     total_tokens = loss_mask.sum()
@@ -162,10 +170,10 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
     lm_loss = torch.sum(lm_loss_.view(-1) * loss_mask.reshape(-1))
     lm_loss = torch.cat([lm_loss.view(1), total_tokens.view(1)])
 
-    reporting_loss = lm_loss.detach()
+    reporting_loss = lm_loss.clone().detach()
     torch.distributed.all_reduce(reporting_loss, group=mpu.get_data_parallel_group())
 
-    num_tokens = lm_loss[1].detach().to(torch.int)
+    num_tokens = lm_loss[1].clone().detach().to(torch.int)
     return lm_loss[0], num_tokens, {'lm loss': (reporting_loss[0], reporting_loss[1])}
 
 

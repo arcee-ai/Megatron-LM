@@ -107,6 +107,10 @@ class ModelParallelConfig:
        be synchronized.
     """
 
+    deterministic_mode: bool = False
+    """If true, code that has deterministic execution will be chosen. This usually
+       means slower execution, but is good for debugging and testing. Defaults to False."""
+
     enable_autocast: bool = False
     """If true runs the forward step function inside torch.autocast context."""
 
@@ -192,6 +196,11 @@ class ModelParallelConfig:
     """Deprecated from TransformerEngine v1.6.0.
        If true, allows Reduce-Scatter overlap with Fprop GEMM by pipelining the GEMM and
        Reduce-Scatter both done atomically. Don't care if tp_comm_overlap is False.
+    """
+
+    cross_entropy_loss_fusion: bool = False
+    """If this is enabled, the fused cross entropy implementation would be used.
+       Defaults to False.
     """
 
     ###################

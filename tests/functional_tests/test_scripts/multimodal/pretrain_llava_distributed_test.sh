@@ -16,6 +16,7 @@ set -exo pipefail
 if [[ -z $MBS ]]; then MBS=4; fi
 if [[ -z $GBS ]]; then GBS=32; fi
 if [[ -z $MOE_GROUPED_GEMM ]]; then MOE_GROUPED_GEMM=0; fi
+if [[ -z $ALLOW_NONDETERMINISTIC ]]; then ALLOW_NONDETERMINISTIC=0; fi
 
 GPUS_PER_NODE=8
 # Change for multinode config
@@ -26,15 +27,22 @@ WORLD_SIZE=$(($GPUS_PER_NODE*$NUM_NODES))
 
 command="export CUDA_DEVICE_MAX_CONNECTIONS=1;"
 
-TRANSFORMER_IMPL=local
 TRAINING_DTYPE=fp16
+TRANSFORMER_IMPL=local
 
+if [[ $ALLOW_NONDETERMINISTIC -eq 1 ]]; then
+   command="$command export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1;"
+else
+   command="$command export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0; export NCCL_ALGO=Tree;"
+   ADDITIONAL_PARAMS+=" --deterministic-mode"
+fi
+
+USE_LEGACY=1
 if [[ $USE_CORE -eq 1 ]]; then
        echo "Running using megatron core"
        TRANSFORMER_IMPL=local
        TRAINING_DTYPE=bf16
-       command="$command export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0;"
-       USE_MCORE=1
+       unset USE_LEGACY
 fi
 
 if [[ $MOE_GROUPED_GEMM -eq 1 ]]; then
@@ -62,9 +70,9 @@ else
        __SAVE_INTERVAL=10000  # inf
 fi
 if [[ -n "$CKPT_FORMAT" ]] && [[ "$CKPT_FORMAT" != 'torch' ]]; then
-       echo "Using distributed checkpoint format..."
-       command="$command pip install zarr tensorstore==0.1.45;"
-       ADDITIONAL_PARAMS+=" --use-dist-ckpt --dist-ckpt-format $CKPT_FORMAT"
+       echo "Using distributed checkpoint format $CKPT_FORMAT..."
+       [[ "$CKPT_FORMAT" == 'zarr' ]] && command="$command pip install zarr tensorstore==0.1.45;"
+       ADDITIONAL_PARAMS+=" --use-dist-ckpt --dist-ckpt-format $CKPT_FORMAT --use-mcore-models"
 fi
 set +x
 
@@ -75,6 +83,8 @@ build_torch_run_cmd() {
     pretrain_vlm.py \
       --num-layers 12 \
       --hidden-size 512 \
+      --attention-dropout 0.0 \
+      --hidden-dropout 0.0 \
       --num-attention-heads 8 \
       --log-params-norm \
       --log-num-zeros-in-grad \
@@ -107,11 +117,9 @@ build_torch_run_cmd() {
       --transformer-impl $TRANSFORMER_IMPL \
       --tensor-model-parallel-size $TP_SIZE \
       --pipeline-model-parallel-size $PP_SIZE \
-      --no-bias-swiglu-fusion \
-      --no-rope-fusion \
       ${VP_SIZE:+--num-layers-per-virtual-pipeline-stage "$VP_SIZE"} \
       ${ADDITIONAL_PARAMS:+$ADDITIONAL_PARAMS} \
-      ${USE_MCORE:+--use-mcore-models} \
+      ${USE_LEGACY:+--use-legacy-models} \
       --no-gradient-accumulation-fusion \
       --${TRAINING_DTYPE} \
       --img-h 336 \
@@ -121,6 +129,12 @@ build_torch_run_cmd() {
 
   if [[ "${TRAINING_DTYPE}" == "fp16" ]]; then
       torch_run_cmd+=" --apply-query-key-layer-scaling"
+      # NVTE_APPLY_QK_LAYER_SCALING=1 is required if using:
+      #  1. --apply-query-key-layer-scaling
+      #  2. transformer_impl="transformer_engine"
+      #  3. TE >= 0.11
+      #  4. fp16
+      export NVTE_APPLY_QK_LAYER_SCALING=1
   fi
 }
 
@@ -162,7 +176,7 @@ echo "$command" > $SCRIPTS_DIR/pretrain_llava_distributed_command.sh
 eval $command
 
 echo "Saving test results to $TENSORBOARD_DIR"
-python3 ./tests/functional_tests/python_test_utils/get_test_results_from_tensorboard_logs.py $TENSORBOARD_DIR "$JOB_NAME" | \
+PYTHONPATH=$PWD python3 ./tests/functional_tests/python_test_utils/get_test_results_from_tensorboard_logs.py $TENSORBOARD_DIR "$JOB_NAME" | \
     tee ${TENSORBOARD_DIR}/results.json
 
 if [[ $SKIP_PYTEST != 1 ]]; then
